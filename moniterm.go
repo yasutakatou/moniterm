@@ -22,9 +22,10 @@ import (
 type App struct {
 	upperContent string
 	inputBuffer  string
+	cursorIdx    int      // 【追加】入力バッファ内のカーソル位置（文字数単位）
 	history      []string // 画面表示用のログ（プロンプトや出力含む）
-	cmdHistory   []string // 【追加】実行したコマンドのみの履歴
-	historyIdx   int      // 【追加】現在の履歴参照位置
+	cmdHistory   []string // 実行したコマンドのみの履歴
+	historyIdx   int      // 現在の履歴参照位置
 	cwd          string
 	ps1          string
 	mutex        sync.Mutex
@@ -67,8 +68,9 @@ func main() {
 	app := &App{
 		upperContent: "",
 		history:      []string{""},
-		cmdHistory:   []string{}, // 初期化
-		historyIdx:   -1,         // -1は履歴を参照していない状態
+		cmdHistory:   []string{},
+		historyIdx:   -1,
+		cursorIdx:    0, // 初期位置
 		cwd:          cwd,
 		ps1:          fmt.Sprintf("%s@%s", u.Username, h),
 	}
@@ -93,26 +95,46 @@ func main() {
 			} else if ev.Key == termbox.KeyTab {
 				app.handleTab()
 			} else if ev.Key == termbox.KeyArrowUp {
-				app.navigateHistory(-1) // 【追加】過去へ
+				app.navigateHistory(-1)
 			} else if ev.Key == termbox.KeyArrowDown {
-				app.navigateHistory(1) // 【追加】未来へ
+				app.navigateHistory(1)
+			} else if ev.Key == termbox.KeyArrowLeft { // 【追加】左カーソル
+				app.mutex.Lock()
+				if app.cursorIdx > 0 {
+					app.cursorIdx--
+				}
+				app.mutex.Unlock()
+			} else if ev.Key == termbox.KeyArrowRight { // 【追加】右カーソル
+				app.mutex.Lock()
+				r := []rune(app.inputBuffer)
+				if app.cursorIdx < len(r) {
+					app.cursorIdx++
+				}
+				app.mutex.Unlock()
 			} else if ev.Key == termbox.KeyBackspace || ev.Key == termbox.KeyBackspace2 {
 				app.mutex.Lock()
-				if len(app.inputBuffer) > 0 {
-					r := []rune(app.inputBuffer)
-					app.inputBuffer = string(r[:len(r)-1])
-					app.historyIdx = -1 // 入力が変わったら履歴参照を解除
+				r := []rune(app.inputBuffer)
+				if app.cursorIdx > 0 {
+					// カーソル位置の前の文字を削除
+					newRunes := append(r[:app.cursorIdx-1], r[app.cursorIdx:]...)
+					app.inputBuffer = string(newRunes)
+					app.cursorIdx--
+					app.historyIdx = -1
+				}
+				app.mutex.Unlock()
+			} else if ev.Key == termbox.KeyDelete { // 【追加】デリートキー
+				app.mutex.Lock()
+				r := []rune(app.inputBuffer)
+				if app.cursorIdx < len(r) {
+					newRunes := append(r[:app.cursorIdx], r[app.cursorIdx+1:]...)
+					app.inputBuffer = string(newRunes)
+					app.historyIdx = -1
 				}
 				app.mutex.Unlock()
 			} else if ev.Key == termbox.KeySpace {
-				app.mutex.Lock()
-				app.inputBuffer += " "
-				app.mutex.Unlock()
+				app.insertChar(' ')
 			} else if ev.Ch != 0 {
-				app.mutex.Lock()
-				app.inputBuffer += string(ev.Ch)
-				app.historyIdx = -1 // 入力が変わったら履歴参照を解除
-				app.mutex.Unlock()
+				app.insertChar(ev.Ch)
 			}
 		case termbox.EventResize:
 		case termbox.EventError:
@@ -122,7 +144,18 @@ func main() {
 	}
 }
 
-// 【追加】履歴移動ロジック
+// 【追加】文字をカーソル位置に挿入する共通処理
+func (a *App) insertChar(ch rune) {
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+	r := []rune(a.inputBuffer)
+	// カーソル位置に挿入
+	newRunes := append(r[:a.cursorIdx], append([]rune{ch}, r[a.cursorIdx:]...)...)
+	a.inputBuffer = string(newRunes)
+	a.cursorIdx++
+	a.historyIdx = -1
+}
+
 func (a *App) navigateHistory(delta int) {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
@@ -131,7 +164,6 @@ func (a *App) navigateHistory(delta int) {
 		return
 	}
 
-	// 履歴参照の開始
 	if a.historyIdx == -1 && delta == -1 {
 		a.historyIdx = len(a.cmdHistory) - 1
 	} else {
@@ -141,6 +173,7 @@ func (a *App) navigateHistory(delta int) {
 		} else if newIdx >= len(a.cmdHistory) {
 			a.historyIdx = -1
 			a.inputBuffer = ""
+			a.cursorIdx = 0
 			return
 		} else {
 			return
@@ -149,6 +182,7 @@ func (a *App) navigateHistory(delta int) {
 
 	if a.historyIdx != -1 {
 		a.inputBuffer = a.cmdHistory[a.historyIdx]
+		a.cursorIdx = len([]rune(a.inputBuffer)) // 履歴時は末尾にカーソル
 	}
 }
 
@@ -196,10 +230,12 @@ func (a *App) handleTab() {
 	} else if len(candidates) == 1 {
 		newLine := line[:len(line)-len(searchTerm)] + candidates[0]
 		a.inputBuffer = newLine
+		a.cursorIdx = len([]rune(a.inputBuffer))
 	} else {
 		common := longestCommonPrefix(candidates)
 		if len(common) > len(searchTerm) {
 			a.inputBuffer = line[:len(line)-len(searchTerm)] + common
+			a.cursorIdx = len([]rune(a.inputBuffer))
 		}
 		a.history = append(a.history, strings.Join(candidates, "  "))
 	}
@@ -237,6 +273,7 @@ func (a *App) handleCommand() {
 	a.mutex.Lock()
 	input := strings.TrimSpace(a.inputBuffer)
 	a.inputBuffer = ""
+	a.cursorIdx = 0   // カーソルをリセット
 	a.historyIdx = -1 // 履歴参照をリセット
 
 	if input == "" {
@@ -244,7 +281,6 @@ func (a *App) handleCommand() {
 		return
 	}
 
-	// コマンド履歴に追加（重複しなければ）
 	if len(a.cmdHistory) == 0 || a.cmdHistory[len(a.cmdHistory)-1] != input {
 		a.cmdHistory = append(a.cmdHistory, input)
 	}
@@ -365,7 +401,9 @@ func (a *App) draw() {
 	promptY := h - 1
 	printString(0, promptY, promptPrefix, termbox.ColorGreen, termbox.ColorDefault)
 	printString(len(promptPrefix), promptY, a.inputBuffer, termbox.ColorWhite, termbox.ColorDefault)
-	termbox.SetCursor(len(promptPrefix)+len(a.inputBuffer), promptY)
+
+	// カーソル位置を計算（プロンプトの長さ + 現在の文字インデックス位置）
+	termbox.SetCursor(len(promptPrefix)+a.cursorIdx, promptY)
 	termbox.Flush()
 }
 
