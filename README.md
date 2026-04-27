@@ -1,1 +1,64 @@
+# moniterm
+
+**A TUI-based monitoring and interactive shell tool implemented in the Go language**
+
 <img width="1085" height="579" alt="moniterm" src="https://github.com/user-attachments/assets/4075f2b0-2b7e-44e1-a6d8-64a9c40f2b99" />
+
+# Feature
+
+- **Dual-Pane Terminal Interface**
+  - The application provides a split-screen interface using the termbox-go library, where the upper section displays monitoring results and the lower section acts as an interactive shell
+- **Periodic Command Execution**
+  - Users can define specific commands to be executed at regular intervals (defaulting to every 3 seconds) to monitor system status or application logs
+- **Label-Based Output Filtering**
+  - The tool automatically filters the output of periodic commands by searching for specific "labels" and only displays matching lines in the monitoring pane
+- **Interactive Shell with Path Completion**
+  - The lower pane functions as a terminal emulator supporting standard commands like cd, command history navigation (Up/Down arrows), and tab completion for files and paths
+- **Cross-Platform Support**
+  - The application is designed to run on both Linux (using /bin/bash or a specified shell) and Windows (using cmd /C)
+
+# Installation
+
+To use this application, you can build it from the source code using the Go compiler:
+
+```
+go build moniterm.go
+```
+
+# Configuration
+
+The application requires a configuration file (default: moniterm.ini) to define which commands to monitor. This file must be tab-separated and contain the following format
+
+```
+LABEL_STRING	COMMAND_TO_EXECUTE
+```
+
+- LABEL: The specific string the application will look for in the command's output
+- COMMAND: The actual shell command to be executed periodically
+
+## Running the Application
+
+You can start the application with several optional flags to customize its behavior
+
+```
+-config: Specify the path to your configuration file (default is moniterm.ini)
+-interval: Set the interval in seconds for the periodic monitoring checks (default is 3)
+-shell: For Linux users, specify the shell to be used (default is /bin/bash)
+
+Example command:
+./moniterm -config=my_monitor.ini -interval=5 -shell=/bin/zsh
+```
+
+# Key Bindings
+
+While the application is running, you can use the following keys to interact with the interface
+
+- Enter: Execute the command typed in the input buffer
+- Tab: Trigger path and filename completion
+- Arrow Up / Down: Navigate through the command history
+- Arrow Left / Right: Move the cursor within the current input line
+- Backspace / Delete: Edit the current command text
+- Esc / Ctrl+C: Exit the application
+
+# License
+MIT license
