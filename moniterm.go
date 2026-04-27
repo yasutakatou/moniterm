@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"os/user"
 	"strings"
 	"sync"
 	"time"
@@ -10,10 +12,12 @@ import (
 	"github.com/nsf/termbox-go"
 )
 
-// アプリケーションの状態管理
 type App struct {
 	upperContent string
 	inputBuffer  string
+	history      []string
+	cwd          string // カレントディレクトリ保持用
+	ps1          string // user@hostname 部分
 	mutex        sync.Mutex
 }
 
@@ -24,40 +28,47 @@ func main() {
 	}
 	defer termbox.Close()
 
+	// Bash風プロンプトのための情報を取得
+	u, _ := user.Current()
+	h, _ := os.Hostname()
+	cwd, _ := os.Getwd()
+
 	app := &App{
 		upperContent: "Command output will appear here...",
+		history:      []string{"Welcome to the Custom Terminal!"},
+		cwd:          cwd,
+		ps1:          fmt.Sprintf("%s@%s", u.Username, h),
 	}
 
-	// 初回の描画
 	app.draw()
 
-	// 1. 定期的にコマンドを実行するゴルーチン (10秒ごと)
+	// 上画面：10秒ごとにコマンド実行
 	go func() {
 		ticker := time.NewTicker(10 * time.Second)
-		// 初回実行
 		app.runPeriodicCommand()
-		
 		for range ticker.C {
 			app.runPeriodicCommand()
 		}
 	}()
 
-	// 2. メインイベントループ (ユーザー入力受付)
+	// イベントループ
 	for {
 		switch ev := termbox.PollEvent(); ev.Type {
 		case termbox.EventKey:
 			if ev.Key == termbox.KeyCtrlC || ev.Key == termbox.KeyEsc {
 				return
 			} else if ev.Key == termbox.KeyEnter {
-				// Enterが押されたら入力をクリア（ここで入力コマンドの処理も可能）
-				app.mutex.Lock()
-				app.inputBuffer = ""
-				app.mutex.Unlock()
+				app.handleCommand()
 			} else if ev.Key == termbox.KeyBackspace || ev.Key == termbox.KeyBackspace2 {
 				app.mutex.Lock()
 				if len(app.inputBuffer) > 0 {
-					app.inputBuffer = app.inputBuffer[:len(app.inputBuffer)-1]
+					r := []rune(app.inputBuffer)
+					app.inputBuffer = string(r[:len(r)-1])
 				}
+				app.mutex.Unlock()
+			} else if ev.Key == termbox.KeySpace {
+				app.mutex.Lock()
+				app.inputBuffer += " "
 				app.mutex.Unlock()
 			} else if ev.Ch != 0 {
 				app.mutex.Lock()
@@ -65,7 +76,6 @@ func main() {
 				app.mutex.Unlock()
 			}
 		case termbox.EventResize:
-			// 画面サイズ変更時
 		case termbox.EventError:
 			panic(ev.Err)
 		}
@@ -73,63 +83,126 @@ func main() {
 	}
 }
 
-// 特定のコマンド（例: uptime）を実行して結果を保存
-func (a *App) runPeriodicCommand() {
-	// 実行するコマンドをここで指定
-	//out, err := exec.Command("cat /var/log/kern.log").Output()
-	out, err := exec.Command("/bin/bash", "-c", "cat /var/log/kern.log").Output()
-	
+// カレントディレクトリをbash風に短縮 (~/...)
+func (a *App) getFormattedDir() string {
+	home, _ := os.UserHomeDir()
+	if strings.HasPrefix(a.cwd, home) {
+		return strings.Replace(a.cwd, home, "~", 1)
+	}
+	return a.cwd
+}
+
+func (a *App) handleCommand() {
 	a.mutex.Lock()
-	if err != nil {
-		a.upperContent = fmt.Sprintf("Error: %v", err)
-	} else {
-		a.upperContent = fmt.Sprintf("Last Update: %s\n%s", 
-			time.Now().Format("15:04:05"), string(out))
+	input := strings.TrimSpace(a.inputBuffer)
+	a.inputBuffer = ""
+
+	if input == "" {
+		a.mutex.Unlock()
+		return
+	}
+
+	// 履歴にプロンプト付きで残す
+	fullPrompt := fmt.Sprintf("%s:%s$ %s", a.ps1, a.getFormattedDir(), input)
+	a.history = append(a.history, fullPrompt)
+	a.mutex.Unlock()
+
+	// 特殊処理: cd コマンド
+	args := strings.Fields(input)
+	if args[0] == "cd" {
+		target := ""
+		if len(args) > 1 {
+			target = args[1]
+		} else {
+			target, _ = os.UserHomeDir()
+		}
+		
+		err := os.Chdir(target)
+		a.mutex.Lock()
+		if err != nil {
+			a.history = append(a.history, err.Error())
+		} else {
+			a.cwd, _ = os.Getwd()
+		}
+		a.mutex.Unlock()
+		return
+	}
+
+	// 一般コマンドの実行
+	cmd := exec.Command("/bin/bash", "-c", input)
+	cmd.Dir = a.cwd // アプリが保持しているディレクトリで実行
+	out, err := cmd.CombinedOutput()
+
+	a.mutex.Lock()
+	if err != nil && len(out) == 0 {
+		a.history = append(a.history, "Error: "+err.Error())
+	}
+	resLines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	for _, line := range resLines {
+		if line != "" {
+			a.history = append(a.history, line)
+		}
 	}
 	a.mutex.Unlock()
-	
-	// 描画更新
+}
+
+func (a *App) runPeriodicCommand() {
+	out, _ := exec.Command("uptime").Output()
+	a.mutex.Lock()
+	a.upperContent = fmt.Sprintf("Last Update: %s\n%s", time.Now().Format("15:04:05"), string(out))
+	a.mutex.Unlock()
 	a.draw()
 }
 
-// 画面描画処理
 func (a *App) draw() {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
 
 	termbox.Clear(termbox.ColorDefault, termbox.ColorDefault)
 	w, h := termbox.Size()
+	separatorY := h / 2
 
-	// 境界線の行を計算
-	separatorY := h - 3
-
-	// --- 上部画面の描画 ---
-	lines := strings.Split(a.upperContent, "\n")
-	for i, line := range lines {
-		if i >= separatorY {
-			break
-		}
-		printString(0, i, line, termbox.ColorCyan, termbox.ColorDefault)
+	// 上部描画
+	uLines := strings.Split(a.upperContent, "\n")
+	for i, line := range uLines {
+		if i >= separatorY { break }
+		printString(0, i, truncate(line, w), termbox.ColorCyan, termbox.ColorDefault)
 	}
 
-	// --- 境界線の描画 ---
+	// 境界線
 	for x := 0; x < w; x++ {
-		termbox.SetCell(x, separatorY, '-', termbox.ColorWhite, termbox.ColorDefault)
+		termbox.SetCell(x, separatorY, '-', termbox.ColorYellow, termbox.ColorDefault)
 	}
 
-	// --- 下部画面（プロンプト）の描画 ---
-	prompt := "> "
-	printString(0, h-2, prompt+a.inputBuffer, termbox.ColorWhite, termbox.ColorDefault)
+	// 下部（履歴）描画
+	historyHeight := (h - 1) - (separatorY + 1)
+	startIdx := 0
+	if len(a.history) > historyHeight {
+		startIdx = len(a.history) - historyHeight
+	}
+	for i := 0; i < historyHeight && (startIdx+i) < len(a.history); i++ {
+		printString(0, separatorY+1+i, truncate(a.history[startIdx+i], w), termbox.ColorWhite, termbox.ColorDefault)
+	}
 
-	// カーソルの位置を入力の末尾にセット
-	termbox.SetCursor(len(prompt)+len(a.inputBuffer), h-2)
+	// プロンプト（最下行）の描画
+	dirPart := a.getFormattedDir()
+	promptPrefix := fmt.Sprintf("%s:%s$ ", a.ps1, dirPart)
+	promptY := h - 1
+	
+	printString(0, promptY, promptPrefix, termbox.ColorGreen, termbox.ColorDefault)
+	printString(len(promptPrefix), promptY, a.inputBuffer, termbox.ColorWhite, termbox.ColorDefault)
 
+	termbox.SetCursor(len(promptPrefix)+len(a.inputBuffer), promptY)
 	termbox.Flush()
 }
 
-// 文字列を描画するヘルパー関数
 func printString(x, y int, str string, fg, bg termbox.Attribute) {
 	for i, ch := range str {
 		termbox.SetCell(x+i, y, ch, fg, bg)
 	}
+}
+
+func truncate(s string, w int) string {
+	if len(s) <= w { return s }
+	return s[:w]
 }
