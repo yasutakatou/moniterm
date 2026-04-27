@@ -42,7 +42,7 @@ var (
 )
 
 func main() {
-	_interval := flag.Int("interval", 10, "[-int=Command check interval]")
+	_interval := flag.Int("interval", 3, "[-int=Command check interval]")
 	_config := flag.String("config", "moniterm.ini", "[-config=Config filename]")
 	_Shell := flag.String("shell", "/bin/bash", "[-shell=Specifies the shell to use in the case of linux]")
 
