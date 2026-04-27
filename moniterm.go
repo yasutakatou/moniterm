@@ -9,6 +9,11 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"flag"
+	"log"
+	"encoding/csv"
+	"io"
+	"bytes"
 
 	"github.com/nsf/termbox-go"
 )
@@ -22,7 +27,30 @@ type App struct {
 	mutex        sync.Mutex
 }
 
+type monitorCommand struct {
+  LABEL  string
+  COMMAND string
+}
+
+var (
+	monitorCommands []monitorCommand
+	shell			string
+)
+
 func main() {
+	_interval := flag.Int("interval",10,"[-int=Command check interval]")
+    _config   := flag.String("config","moniterm.ini","[-config=Config filename]")
+	_Shell := flag.String("shell", "/bin/bash", "[-shell=Specifies the shell to use in the case of linux]")
+
+	flag.Parse()
+
+	shell = string(*_Shell)
+
+	if loadConfig(*_config) == false {
+		log.Fatalf("Fail to read config file")
+		os.Exit(1)
+	}
+
 	err := termbox.Init()
 	if err != nil {
 		panic(err)
@@ -34,8 +62,8 @@ func main() {
 	cwd, _ := os.Getwd()
 
 	app := &App{
-		upperContent: "Command output will appear here...",
-		history:      []string{"Welcome! Tab completion is enabled."},
+		upperContent: "",
+		history:      []string{""},
 		cwd:          cwd,
 		ps1:          fmt.Sprintf("%s@%s", u.Username, h),
 	}
@@ -43,7 +71,7 @@ func main() {
 	app.draw()
 
 	go func() {
-		ticker := time.NewTicker(10 * time.Second)
+		ticker := time.NewTicker(time.Duration(int(*_interval)) * time.Second)
 		app.runPeriodicCommand()
 		for range ticker.C {
 			app.runPeriodicCommand()
@@ -191,7 +219,7 @@ func (a *App) handleCommand() {
 		return
 	}
 
-	cmd := exec.Command("/bin/bash", "-c", input)
+	cmd := exec.Command(shell, "-c", input)
 	cmd.Dir = a.cwd
 	out, err := cmd.CombinedOutput()
 
@@ -211,11 +239,38 @@ func (a *App) getFormattedDir() string {
 }
 
 func (a *App) runPeriodicCommand() {
-	out, _ := exec.Command("uptime").Output()
+	outputs := ""
+
+	for _, cmd := range monitorCommands {
+		out, _ := exec.Command(shell, "-c", cmd.COMMAND).CombinedOutput()
+		outputs = outputs + ExtractErrorLines(out, cmd.LABEL)
+	}
+	
 	a.mutex.Lock()
-	a.upperContent = fmt.Sprintf("Last Update: %s\n%s", time.Now().Format("15:04:05"), string(out))
+	a.upperContent = outputs
 	a.mutex.Unlock()
 	a.draw()
+}
+
+// ExtractErrorLines は []byte を受け取り、"Error" を含む行を []string で返します
+func ExtractErrorLines(data []byte, Label string) string {
+	result := ""
+
+	// 1. []byte を改行で分割する
+	// bytes.Split は []byte を保持したまま分割するためメモリ効率が良いです
+	lines := bytes.Split(data, []byte("\n"))
+
+	for _, line := range lines {
+		// 2. 各行を文字列に変換
+		strLine := string(line)
+
+		// 3. "Error" が含まれているかチェック
+		if strings.Contains(strLine, Label) {
+			result = result + strLine + "\n"
+		}
+	}
+
+	return result
 }
 
 func (a *App) draw() {
@@ -254,4 +309,34 @@ func printString(x, y int, str string, fg, bg termbox.Attribute) {
 func truncate(s string, w int) string {
 	if len(s) <= w { return s }
 	return s[:w]
+}
+
+func loadConfig(configFile string) bool {
+	var fp *os.File
+	var err error
+	fp, err = os.Open(configFile)
+	if err != nil {
+		panic(err)
+	}
+	defer fp.Close()
+
+	reader := csv.NewReader(fp)
+	reader.Comma = '\t'
+	reader.LazyQuotes = true
+	for {
+		record, err := reader.Read()
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			panic(err)
+		}
+		if len(record) == 2 {
+			monitorCommands = append(monitorCommands, monitorCommand{LABEL: record[0], COMMAND: record[1]})
+			fmt.Println(record)
+		}
+	}
+	if monitorCommands == nil {
+		return false
+	}
+	return true
 }
