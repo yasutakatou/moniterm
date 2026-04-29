@@ -29,14 +29,14 @@ type App struct {
 	cwd              string
 	ps1              string
 	showPopup        bool
-	popupSelectedIdx int // 【追加】ポップアップ内の選択インデックス
+	popupSelectedIdx int
 	mutex            sync.Mutex
 }
 
 type monitorCommand struct {
 	LABEL   string
 	COMMAND string
-	Enabled bool // 【追加】実行のオン/オフ
+	Enabled bool
 }
 
 var (
@@ -101,7 +101,6 @@ func main() {
 			} else if ev.Key == termbox.KeyCtrlC || ev.Key == termbox.KeyEsc {
 				return
 			} else if app.showPopup {
-				// 【追加】ポップアップ表示中の操作
 				app.mutex.Lock()
 				switch ev.Key {
 				case termbox.KeyArrowUp:
@@ -126,7 +125,6 @@ func main() {
 				}
 				app.mutex.Unlock()
 			} else {
-				// 通常時の操作
 				if ev.Key == termbox.KeyEnter {
 					app.handleCommand()
 				} else if ev.Key == termbox.KeyTab {
@@ -181,202 +179,29 @@ func main() {
 	}
 }
 
-func (a *App) drawPopup(w, h int) {
-	pW := w * 4 / 5
-	pH := h * 4 / 5
-	pX := (w - pW) / 2
-	pY := (h - pH) / 2
+// ダブルクォーテーションを考慮して引数をパースする関数
+func parseArgs(input string) []string {
+	var args []string
+	var current strings.Builder
+	inQuotes := false
 
-	for y := pY; y < pY+pH; y++ {
-		for x := pX; x < pX+pW; x++ {
-			char := ' '
-			bg := termbox.ColorBlack
-			if y == pY || y == pY+pH-1 {
-				char = '-'
-			} else if x == pX || x == pX+pW-1 {
-				char = '|'
+	for _, r := range input {
+		switch {
+		case r == '"':
+			inQuotes = !inQuotes
+		case r == ' ' && !inQuotes:
+			if current.Len() > 0 {
+				args = append(args, current.String())
+				current.Reset()
 			}
-			termbox.SetCell(x, y, char, termbox.ColorDefault, bg)
+		default:
+			current.WriteRune(r)
 		}
 	}
-
-	title := " Monitor Commands [Space: Toggle ON/OFF, Del: Remove] "
-	printString(pX+(pW-len(title))/2, pY, title, termbox.ColorYellow|termbox.AttrBold, termbox.ColorBlack)
-
-	headerStatus := "RUN"
-	headerLabel := "LABEL"
-	headerCmd := "COMMAND"
-	col1Width := 5
-	col2Width := 15
-	printString(pX+2, pY+2, headerStatus, termbox.ColorCyan, termbox.ColorBlack)
-	printString(pX+2+col1Width, pY+2, headerLabel, termbox.ColorCyan, termbox.ColorBlack)
-	printString(pX+2+col1Width+col2Width, pY+2, headerCmd, termbox.ColorCyan, termbox.ColorBlack)
-
-	line := strings.Repeat("-", pW-4)
-	printString(pX+2, pY+3, line, termbox.ColorWhite, termbox.ColorBlack)
-
-	for i, cmd := range monitorCommands {
-		if i >= pH-6 {
-			break
-		}
-		rowY := pY + 4 + i
-		fg := termbox.ColorWhite
-		bg := termbox.ColorBlack
-
-		// 選択行のハイライト
-		if i == a.popupSelectedIdx {
-			fg = termbox.ColorBlack
-			bg = termbox.ColorWhite
-		}
-
-		status := "[ ]"
-		if cmd.Enabled {
-			status = "[X]"
-		}
-
-		// 行全体の塗りつぶし（ハイライト用）
-		for x := pX + 1; x < pX+pW-1; x++ {
-			termbox.SetCell(x, rowY, ' ', fg, bg)
-		}
-
-		printString(pX+2, rowY, status, fg, bg)
-		printString(pX+2+col1Width, rowY, truncate(cmd.LABEL, col2Width-2), fg, bg)
-		printString(pX+2+col1Width+col2Width, rowY, truncate(cmd.COMMAND, pW-(col1Width+col2Width)-5), fg, bg)
+	if current.Len() > 0 {
+		args = append(args, current.String())
 	}
-}
-
-// 実行判定の追加
-func (a *App) runPeriodicCommand() {
-	var out []byte
-	outputs := ""
-	for _, cmd := range monitorCommands {
-		if !cmd.Enabled {
-			continue // 【修正】オフの場合はスキップ
-		}
-		if runtime.GOOS == "windows" {
-			out, _ = exec.Command("cmd", "/C", cmd.COMMAND).CombinedOutput()
-		} else {
-			out, _ = exec.Command(shell, "-c", cmd.COMMAND).CombinedOutput()
-		}
-		outputs = outputs + ExtractErrorLines(out, cmd.LABEL, cmd.COMMAND)
-	}
-	a.mutex.Lock()
-	a.upperContent = outputs
-	a.mutex.Unlock()
-	a.draw()
-}
-
-// -- 以下、既存の補助関数群 --
-
-func (a *App) insertChar(ch rune) {
-	a.mutex.Lock()
-	defer a.mutex.Unlock()
-	r := []rune(a.inputBuffer)
-	newRunes := append(r[:a.cursorIdx], append([]rune{ch}, r[a.cursorIdx:]...)...)
-	a.inputBuffer = string(newRunes)
-	a.cursorIdx++
-	a.historyIdx = -1
-}
-
-func (a *App) navigateHistory(delta int) {
-	a.mutex.Lock()
-	defer a.mutex.Unlock()
-	if len(a.cmdHistory) == 0 {
-		return
-	}
-	if a.historyIdx == -1 && delta == -1 {
-		a.historyIdx = len(a.cmdHistory) - 1
-	} else {
-		newIdx := a.historyIdx + delta
-		if newIdx >= 0 && newIdx < len(a.cmdHistory) {
-			a.historyIdx = newIdx
-		} else if newIdx >= len(a.cmdHistory) {
-			a.historyIdx = -1
-			a.inputBuffer = ""
-			a.cursorIdx = 0
-			return
-		} else {
-			return
-		}
-	}
-	if a.historyIdx != -1 {
-		a.inputBuffer = a.cmdHistory[a.historyIdx]
-		a.cursorIdx = len([]rune(a.inputBuffer))
-	}
-}
-
-func (a *App) handleTab() {
-	a.mutex.Lock()
-	defer a.mutex.Unlock()
-	line := a.inputBuffer
-	parts := strings.Fields(line)
-	if line == "" || strings.HasSuffix(line, " ") {
-		return
-	}
-	searchTerm := parts[len(parts)-1]
-	var candidates []string
-	if len(parts) == 1 {
-		pathEnv := os.Getenv("PATH")
-		for _, dir := range filepath.SplitList(pathEnv) {
-			files, _ := os.ReadDir(dir)
-			for _, f := range files {
-				if strings.HasPrefix(f.Name(), searchTerm) {
-					candidates = append(candidates, f.Name())
-				}
-			}
-		}
-	}
-	files, _ := os.ReadDir(a.cwd)
-	for _, f := range files {
-		name := f.Name()
-		if f.IsDir() {
-			name += "/"
-		}
-		if strings.HasPrefix(name, searchTerm) {
-			candidates = append(candidates, name)
-		}
-	}
-	candidates = uniqueStrings(candidates)
-	if len(candidates) == 1 {
-		newLine := line[:len(line)-len(searchTerm)] + candidates[0]
-		a.inputBuffer = newLine
-		a.cursorIdx = len([]rune(a.inputBuffer))
-	} else if len(candidates) > 1 {
-		common := longestCommonPrefix(candidates)
-		if len(common) > len(searchTerm) {
-			a.inputBuffer = line[:len(line)-len(searchTerm)] + common
-			a.cursorIdx = len([]rune(a.inputBuffer))
-		}
-		a.history = append(a.history, strings.Join(candidates, "  "))
-	}
-}
-
-func uniqueStrings(slice []string) []string {
-	m := make(map[string]bool)
-	var result []string
-	for _, s := range slice {
-		if !m[s] {
-			m[s] = true
-			result = append(result, s)
-		}
-	}
-	return result
-}
-
-func longestCommonPrefix(strs []string) string {
-	if len(strs) == 0 {
-		return ""
-	}
-	prefix := strs[0]
-	for _, s := range strs[1:] {
-		for !strings.HasPrefix(s, prefix) {
-			prefix = prefix[:len(prefix)-1]
-			if prefix == "" {
-				return ""
-			}
-		}
-	}
-	return prefix
+	return args
 }
 
 func (a *App) handleCommand() {
@@ -385,18 +210,38 @@ func (a *App) handleCommand() {
 	a.inputBuffer = ""
 	a.cursorIdx = 0
 	a.historyIdx = -1
+
 	if input == "" {
 		a.mutex.Unlock()
 		return
 	}
+
 	if len(a.cmdHistory) == 0 || a.cmdHistory[len(a.cmdHistory)-1] != input {
 		a.cmdHistory = append(a.cmdHistory, input)
 	}
+
 	fullPrompt := fmt.Sprintf("%s:%s$ %s", a.ps1, a.getFormattedDir(), input)
 	a.history = append(a.history, fullPrompt)
+	
+	// 入力が "Label" "Command" 形式かチェック
+	args := parseArgs(input)
+	
+	// monitorCommandの追加モード判断 ("ラベル" "コマンド" の2引数)
+	if strings.HasPrefix(input, "\"") && len(args) == 2 {
+		monitorCommands = append(monitorCommands, monitorCommand{
+			LABEL:   args[0],
+			COMMAND: args[1],
+			Enabled: true,
+		})
+		a.history = append(a.history, fmt.Sprintf("Added monitor command: [%s]", args[0]))
+		a.mutex.Unlock()
+		return
+	}
 	a.mutex.Unlock()
 
-	args := strings.Fields(input)
+	// 通常のコマンド実行
+	if len(args) == 0 { return }
+	
 	if args[0] == "cd" {
 		target := ""
 		if len(args) > 1 {
@@ -437,11 +282,168 @@ func (a *App) handleCommand() {
 	a.mutex.Unlock()
 }
 
+// --- 以降は描画・補助ロジック (変更なし) ---
+
+func (a *App) drawPopup(w, h int) {
+	pW := w * 4 / 5
+	pH := h * 4 / 5
+	pX := (w - pW) / 2
+	pY := (h - pH) / 2
+
+	for y := pY; y < pY+pH; y++ {
+		for x := pX; x < pX+pW; x++ {
+			char := ' '
+			bg := termbox.ColorBlack
+			if y == pY || y == pY+pH-1 {
+				char = '-'
+			} else if x == pX || x == pX+pW-1 {
+				char = '|'
+			}
+			termbox.SetCell(x, y, char, termbox.ColorDefault, bg)
+		}
+	}
+
+	title := " Monitor Commands [Space: Toggle ON/OFF, Del: Remove] "
+	printString(pX+(pW-len(title))/2, pY, title, termbox.ColorYellow|termbox.AttrBold, termbox.ColorBlack)
+
+	headerStatus := "RUN"
+	headerLabel := "LABEL"
+	headerCmd := "COMMAND"
+	col1Width := 5
+	col2Width := 15
+	printString(pX+2, pY+2, headerStatus, termbox.ColorCyan, termbox.ColorBlack)
+	printString(pX+2+col1Width, pY+2, headerLabel, termbox.ColorCyan, termbox.ColorBlack)
+	printString(pX+2+col1Width+col2Width, pY+2, headerCmd, termbox.ColorCyan, termbox.ColorBlack)
+
+	line := strings.Repeat("-", pW-4)
+	printString(pX+2, pY+3, line, termbox.ColorWhite, termbox.ColorBlack)
+
+	for i, cmd := range monitorCommands {
+		if i >= pH-6 { break }
+		rowY := pY + 4 + i
+		fg := termbox.ColorWhite
+		bg := termbox.ColorBlack
+		if i == a.popupSelectedIdx {
+			fg = termbox.ColorBlack
+			bg = termbox.ColorWhite
+		}
+		status := "[ ]"
+		if cmd.Enabled { status = "[X]" }
+		for x := pX + 1; x < pX+pW-1; x++ {
+			termbox.SetCell(x, rowY, ' ', fg, bg)
+		}
+		printString(pX+2, rowY, status, fg, bg)
+		printString(pX+2+col1Width, rowY, truncate(cmd.LABEL, col2Width-2), fg, bg)
+		printString(pX+2+col1Width+col2Width, rowY, truncate(cmd.COMMAND, pW-(col1Width+col2Width)-5), fg, bg)
+	}
+}
+
+func (a *App) runPeriodicCommand() {
+	var out []byte
+	outputs := ""
+	for _, cmd := range monitorCommands {
+		if !cmd.Enabled { continue }
+		if runtime.GOOS == "windows" {
+			out, _ = exec.Command("cmd", "/C", cmd.COMMAND).CombinedOutput()
+		} else {
+			out, _ = exec.Command(shell, "-c", cmd.COMMAND).CombinedOutput()
+		}
+		outputs = outputs + ExtractErrorLines(out, cmd.LABEL, cmd.COMMAND)
+	}
+	a.mutex.Lock()
+	a.upperContent = outputs
+	a.mutex.Unlock()
+	a.draw()
+}
+
+func (a *App) insertChar(ch rune) {
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+	r := []rune(a.inputBuffer)
+	newRunes := append(r[:a.cursorIdx], append([]rune{ch}, r[a.cursorIdx:]...)...)
+	a.inputBuffer = string(newRunes)
+	a.cursorIdx++
+	a.historyIdx = -1
+}
+
+func (a *App) navigateHistory(delta int) {
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+	if len(a.cmdHistory) == 0 { return }
+	if a.historyIdx == -1 && delta == -1 {
+		a.historyIdx = len(a.cmdHistory) - 1
+	} else {
+		newIdx := a.historyIdx + delta
+		if newIdx >= 0 && newIdx < len(a.cmdHistory) {
+			a.historyIdx = newIdx
+		} else if newIdx >= len(a.cmdHistory) {
+			a.historyIdx = -1; a.inputBuffer = ""; a.cursorIdx = 0; return
+		} else { return }
+	}
+	if a.historyIdx != -1 {
+		a.inputBuffer = a.cmdHistory[a.historyIdx]
+		a.cursorIdx = len([]rune(a.inputBuffer))
+	}
+}
+
+func (a *App) handleTab() {
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+	line := a.inputBuffer
+	parts := strings.Fields(line)
+	if line == "" || strings.HasSuffix(line, " ") { return }
+	searchTerm := parts[len(parts)-1]
+	var candidates []string
+	if len(parts) == 1 {
+		pathEnv := os.Getenv("PATH")
+		for _, dir := range filepath.SplitList(pathEnv) {
+			files, _ := os.ReadDir(dir)
+			for _, f := range files {
+				if strings.HasPrefix(f.Name(), searchTerm) { candidates = append(candidates, f.Name()) }
+			}
+		}
+	}
+	files, _ := os.ReadDir(a.cwd)
+	for _, f := range files {
+		name := f.Name()
+		if f.IsDir() { name += "/" }
+		if strings.HasPrefix(name, searchTerm) { candidates = append(candidates, name) }
+	}
+	candidates = uniqueStrings(candidates)
+	if len(candidates) == 1 {
+		newLine := line[:len(line)-len(searchTerm)] + candidates[0]
+		a.inputBuffer = newLine; a.cursorIdx = len([]rune(a.inputBuffer))
+	} else if len(candidates) > 1 {
+		common := longestCommonPrefix(candidates)
+		if len(common) > len(searchTerm) {
+			a.inputBuffer = line[:len(line)-len(searchTerm)] + common
+			a.cursorIdx = len([]rune(a.inputBuffer))
+		}
+		a.history = append(a.history, strings.Join(candidates, "  "))
+	}
+}
+
+func uniqueStrings(slice []string) []string {
+	m := make(map[string]bool); var result []string
+	for _, s := range slice { if !m[s] { m[s] = true; result = append(result, s) } }
+	return result
+}
+
+func longestCommonPrefix(strs []string) string {
+	if len(strs) == 0 { return "" }
+	prefix := strs[0]
+	for _, s := range strs[1:] {
+		for !strings.HasPrefix(s, prefix) {
+			prefix = prefix[:len(prefix)-1]
+			if prefix == "" { return "" }
+		}
+	}
+	return prefix
+}
+
 func (a *App) getFormattedDir() string {
 	home, _ := os.UserHomeDir()
-	if strings.HasPrefix(a.cwd, home) {
-		return strings.Replace(a.cwd, home, "~", 1)
-	}
+	if strings.HasPrefix(a.cwd, home) { return strings.Replace(a.cwd, home, "~", 1) }
 	return a.cwd
 }
 
@@ -450,9 +452,7 @@ func ExtractErrorLines(data []byte, Label, Command string) string {
 	lines := bytes.Split(data, []byte("\n"))
 	for _, line := range lines {
 		strLine := string(line)
-		if strings.Contains(strLine, Label) {
-			result = result + "[" + Command + "] " + strLine + "\n"
-		}
+		if strings.Contains(strLine, Label) { result = result + "[" + Command + "] " + strLine + "\n" }
 	}
 	return result
 }
@@ -466,20 +466,14 @@ func (a *App) draw() {
 
 	uLines := strings.Split(a.upperContent, "\n")
 	for i, line := range uLines {
-		if i >= separatorY {
-			break
-		}
+		if i >= separatorY { break }
 		printString(0, i, truncate(line, w), termbox.ColorCyan, termbox.ColorDefault)
 	}
-	for x := 0; x < w; x++ {
-		termbox.SetCell(x, separatorY, '-', termbox.ColorYellow, termbox.ColorDefault)
-	}
+	for x := 0; x < w; x++ { termbox.SetCell(x, separatorY, '-', termbox.ColorYellow, termbox.ColorDefault) }
 
 	historyHeight := (h - 1) - (separatorY + 1)
 	startIdx := 0
-	if len(a.history) > historyHeight {
-		startIdx = len(a.history) - historyHeight
-	}
+	if len(a.history) > historyHeight { startIdx = len(a.history) - historyHeight }
 	for i := 0; i < historyHeight && (startIdx+i) < len(a.history); i++ {
 		printString(0, separatorY+1+i, truncate(a.history[startIdx+i], w), termbox.ColorWhite, termbox.ColorDefault)
 	}
@@ -495,41 +489,29 @@ func (a *App) draw() {
 	} else {
 		termbox.SetCursor(len(promptPrefix)+a.cursorIdx, promptY)
 	}
-
 	termbox.Flush()
 }
 
 func printString(x, y int, str string, fg, bg termbox.Attribute) {
-	for i, ch := range str {
-		termbox.SetCell(x+i, y, ch, fg, bg)
-	}
+	for i, ch := range str { termbox.SetCell(x+i, y, ch, fg, bg) }
 }
 
 func truncate(s string, w int) string {
-	if len(s) <= w {
-		return s
-	}
+	if len(s) <= w { return s }
 	return s[:w]
 }
 
 func loadConfig(configFile string) bool {
 	fp, err := os.Open(configFile)
-	if err != nil {
-		return false
-	}
+	if err != nil { return false }
 	defer fp.Close()
 	reader := csv.NewReader(fp)
 	reader.Comma = '\t'
 	reader.LazyQuotes = true
 	for {
 		record, err := reader.Read()
-		if err == io.EOF {
-			break
-		} else if err != nil {
-			return false
-		}
+		if err == io.EOF { break } else if err != nil { return false }
 		if len(record) == 2 {
-			// デフォルト Enabled: true で読み込み
 			monitorCommands = append(monitorCommands, monitorCommand{LABEL: record[0], COMMAND: record[1], Enabled: true})
 		}
 	}
