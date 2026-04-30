@@ -42,6 +42,7 @@ type monitorCommand struct {
 var (
 	monitorCommands []monitorCommand
 	shell           string
+	configFilePath  string // 保存用にグローバルで保持
 )
 
 func main() {
@@ -51,8 +52,9 @@ func main() {
 
 	flag.Parse()
 	shell = string(*_Shell)
+	configFilePath = *_config // ファイルパスを保持
 
-	if loadConfig(*_config) == false {
+	if loadConfig(configFilePath) == false {
 		log.Fatalf("Fail to read config file")
 		os.Exit(1)
 	}
@@ -123,6 +125,14 @@ func main() {
 						}
 					}
 				}
+				// 'w' キーで保存処理を追加
+				if ev.Ch == 'w' {
+					if saveConfig(configFilePath) {
+						app.history = append(app.history, "Config saved to "+configFilePath)
+					} else {
+						app.history = append(app.history, "Failed to save config")
+					}
+				}
 				app.mutex.Unlock()
 			} else {
 				if ev.Key == termbox.KeyEnter {
@@ -179,6 +189,27 @@ func main() {
 	}
 }
 
+// 設定をファイルに保存する関数
+func saveConfig(configFile string) bool {
+	fp, err := os.Create(configFile) // 上書き保存
+	if err != nil {
+		return false
+	}
+	defer fp.Close()
+
+	writer := csv.NewWriter(fp)
+	writer.Comma = '\t'
+
+	for _, cmd := range monitorCommands {
+		err := writer.Write([]string{cmd.LABEL, cmd.COMMAND})
+		if err != nil {
+			return false
+		}
+	}
+	writer.Flush()
+	return true
+}
+
 // ダブルクォーテーションを考慮して引数をパースする関数
 func parseArgs(input string) []string {
 	var args []string
@@ -222,10 +253,10 @@ func (a *App) handleCommand() {
 
 	fullPrompt := fmt.Sprintf("%s:%s$ %s", a.ps1, a.getFormattedDir(), input)
 	a.history = append(a.history, fullPrompt)
-	
+
 	// 入力が "Label" "Command" 形式かチェック
 	args := parseArgs(input)
-	
+
 	// monitorCommandの追加モード判断 ("ラベル" "コマンド" の2引数)
 	if strings.HasPrefix(input, "\"") && len(args) == 2 {
 		monitorCommands = append(monitorCommands, monitorCommand{
@@ -240,8 +271,10 @@ func (a *App) handleCommand() {
 	a.mutex.Unlock()
 
 	// 通常のコマンド実行
-	if len(args) == 0 { return }
-	
+	if len(args) == 0 {
+		return
+	}
+
 	if args[0] == "cd" {
 		target := ""
 		if len(args) > 1 {
@@ -282,8 +315,6 @@ func (a *App) handleCommand() {
 	a.mutex.Unlock()
 }
 
-// --- 以降は描画・補助ロジック (変更なし) ---
-
 func (a *App) drawPopup(w, h int) {
 	pW := w * 4 / 5
 	pH := h * 4 / 5
@@ -303,7 +334,7 @@ func (a *App) drawPopup(w, h int) {
 		}
 	}
 
-	title := " Monitor Commands [Space: Toggle ON/OFF, Del: Remove] "
+	title := " Monitor Commands [Space: Toggle, Del: Remove, w: Save Config] "
 	printString(pX+(pW-len(title))/2, pY, title, termbox.ColorYellow|termbox.AttrBold, termbox.ColorBlack)
 
 	headerStatus := "RUN"
@@ -319,7 +350,9 @@ func (a *App) drawPopup(w, h int) {
 	printString(pX+2, pY+3, line, termbox.ColorWhite, termbox.ColorBlack)
 
 	for i, cmd := range monitorCommands {
-		if i >= pH-6 { break }
+		if i >= pH-6 {
+			break
+		}
 		rowY := pY + 4 + i
 		fg := termbox.ColorWhite
 		bg := termbox.ColorBlack
@@ -328,7 +361,9 @@ func (a *App) drawPopup(w, h int) {
 			bg = termbox.ColorWhite
 		}
 		status := "[ ]"
-		if cmd.Enabled { status = "[X]" }
+		if cmd.Enabled {
+			status = "[X]"
+		}
 		for x := pX + 1; x < pX+pW-1; x++ {
 			termbox.SetCell(x, rowY, ' ', fg, bg)
 		}
@@ -342,7 +377,9 @@ func (a *App) runPeriodicCommand() {
 	var out []byte
 	outputs := ""
 	for _, cmd := range monitorCommands {
-		if !cmd.Enabled { continue }
+		if !cmd.Enabled {
+			continue
+		}
 		if runtime.GOOS == "windows" {
 			out, _ = exec.Command("cmd", "/C", cmd.COMMAND).CombinedOutput()
 		} else {
@@ -369,7 +406,9 @@ func (a *App) insertChar(ch rune) {
 func (a *App) navigateHistory(delta int) {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
-	if len(a.cmdHistory) == 0 { return }
+	if len(a.cmdHistory) == 0 {
+		return
+	}
 	if a.historyIdx == -1 && delta == -1 {
 		a.historyIdx = len(a.cmdHistory) - 1
 	} else {
@@ -377,8 +416,13 @@ func (a *App) navigateHistory(delta int) {
 		if newIdx >= 0 && newIdx < len(a.cmdHistory) {
 			a.historyIdx = newIdx
 		} else if newIdx >= len(a.cmdHistory) {
-			a.historyIdx = -1; a.inputBuffer = ""; a.cursorIdx = 0; return
-		} else { return }
+			a.historyIdx = -1
+			a.inputBuffer = ""
+			a.cursorIdx = 0
+			return
+		} else {
+			return
+		}
 	}
 	if a.historyIdx != -1 {
 		a.inputBuffer = a.cmdHistory[a.historyIdx]
@@ -391,7 +435,9 @@ func (a *App) handleTab() {
 	defer a.mutex.Unlock()
 	line := a.inputBuffer
 	parts := strings.Fields(line)
-	if line == "" || strings.HasSuffix(line, " ") { return }
+	if line == "" || strings.HasSuffix(line, " ") {
+		return
+	}
 	searchTerm := parts[len(parts)-1]
 	var candidates []string
 	if len(parts) == 1 {
@@ -399,20 +445,27 @@ func (a *App) handleTab() {
 		for _, dir := range filepath.SplitList(pathEnv) {
 			files, _ := os.ReadDir(dir)
 			for _, f := range files {
-				if strings.HasPrefix(f.Name(), searchTerm) { candidates = append(candidates, f.Name()) }
+				if strings.HasPrefix(f.Name(), searchTerm) {
+					candidates = append(candidates, f.Name())
+				}
 			}
 		}
 	}
 	files, _ := os.ReadDir(a.cwd)
 	for _, f := range files {
 		name := f.Name()
-		if f.IsDir() { name += "/" }
-		if strings.HasPrefix(name, searchTerm) { candidates = append(candidates, name) }
+		if f.IsDir() {
+			name += "/"
+		}
+		if strings.HasPrefix(name, searchTerm) {
+			candidates = append(candidates, name)
+		}
 	}
 	candidates = uniqueStrings(candidates)
 	if len(candidates) == 1 {
 		newLine := line[:len(line)-len(searchTerm)] + candidates[0]
-		a.inputBuffer = newLine; a.cursorIdx = len([]rune(a.inputBuffer))
+		a.inputBuffer = newLine
+		a.cursorIdx = len([]rune(a.inputBuffer))
 	} else if len(candidates) > 1 {
 		common := longestCommonPrefix(candidates)
 		if len(common) > len(searchTerm) {
@@ -424,18 +477,28 @@ func (a *App) handleTab() {
 }
 
 func uniqueStrings(slice []string) []string {
-	m := make(map[string]bool); var result []string
-	for _, s := range slice { if !m[s] { m[s] = true; result = append(result, s) } }
+	m := make(map[string]bool)
+	var result []string
+	for _, s := range slice {
+		if !m[s] {
+			m[s] = true
+			result = append(result, s)
+		}
+	}
 	return result
 }
 
 func longestCommonPrefix(strs []string) string {
-	if len(strs) == 0 { return "" }
+	if len(strs) == 0 {
+		return ""
+	}
 	prefix := strs[0]
 	for _, s := range strs[1:] {
 		for !strings.HasPrefix(s, prefix) {
 			prefix = prefix[:len(prefix)-1]
-			if prefix == "" { return "" }
+			if prefix == "" {
+				return ""
+			}
 		}
 	}
 	return prefix
@@ -443,7 +506,9 @@ func longestCommonPrefix(strs []string) string {
 
 func (a *App) getFormattedDir() string {
 	home, _ := os.UserHomeDir()
-	if strings.HasPrefix(a.cwd, home) { return strings.Replace(a.cwd, home, "~", 1) }
+	if strings.HasPrefix(a.cwd, home) {
+		return strings.Replace(a.cwd, home, "~", 1)
+	}
 	return a.cwd
 }
 
@@ -452,7 +517,9 @@ func ExtractErrorLines(data []byte, Label, Command string) string {
 	lines := bytes.Split(data, []byte("\n"))
 	for _, line := range lines {
 		strLine := string(line)
-		if strings.Contains(strLine, Label) { result = result + "[" + Command + "] " + strLine + "\n" }
+		if strings.Contains(strLine, Label) {
+			result = result + "[" + Command + "] " + strLine + "\n"
+		}
 	}
 	return result
 }
@@ -466,14 +533,20 @@ func (a *App) draw() {
 
 	uLines := strings.Split(a.upperContent, "\n")
 	for i, line := range uLines {
-		if i >= separatorY { break }
+		if i >= separatorY {
+			break
+		}
 		printString(0, i, truncate(line, w), termbox.ColorCyan, termbox.ColorDefault)
 	}
-	for x := 0; x < w; x++ { termbox.SetCell(x, separatorY, '-', termbox.ColorYellow, termbox.ColorDefault) }
+	for x := 0; x < w; x++ {
+		termbox.SetCell(x, separatorY, '-', termbox.ColorYellow, termbox.ColorDefault)
+	}
 
 	historyHeight := (h - 1) - (separatorY + 1)
 	startIdx := 0
-	if len(a.history) > historyHeight { startIdx = len(a.history) - historyHeight }
+	if len(a.history) > historyHeight {
+		startIdx = len(a.history) - historyHeight
+	}
 	for i := 0; i < historyHeight && (startIdx+i) < len(a.history); i++ {
 		printString(0, separatorY+1+i, truncate(a.history[startIdx+i], w), termbox.ColorWhite, termbox.ColorDefault)
 	}
@@ -493,24 +566,34 @@ func (a *App) draw() {
 }
 
 func printString(x, y int, str string, fg, bg termbox.Attribute) {
-	for i, ch := range str { termbox.SetCell(x+i, y, ch, fg, bg) }
+	for i, ch := range str {
+		termbox.SetCell(x+i, y, ch, fg, bg)
+	}
 }
 
 func truncate(s string, w int) string {
-	if len(s) <= w { return s }
+	if len(s) <= w {
+		return s
+	}
 	return s[:w]
 }
 
 func loadConfig(configFile string) bool {
 	fp, err := os.Open(configFile)
-	if err != nil { return false }
+	if err != nil {
+		return false
+	}
 	defer fp.Close()
 	reader := csv.NewReader(fp)
 	reader.Comma = '\t'
 	reader.LazyQuotes = true
 	for {
 		record, err := reader.Read()
-		if err == io.EOF { break } else if err != nil { return false }
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			return false
+		}
 		if len(record) == 2 {
 			monitorCommands = append(monitorCommands, monitorCommand{LABEL: record[0], COMMAND: record[1], Enabled: true})
 		}
