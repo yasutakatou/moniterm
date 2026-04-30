@@ -20,7 +20,7 @@
 - **Cross-Platform Support**
   - The application is designed to run on both Linux (using /bin/bash or a specified shell) and Windows (using cmd /C)
 
-<img width="1103" height="584" alt="image" src="https://github.com/user-attachments/assets/683c3939-8fd8-4eef-8390-8c643d67d5ce" />
+<img width="876" height="457" alt="image" src="https://github.com/user-attachments/assets/00987a0c-e26a-41fa-850a-c9da49981fd7" />
 
 # Installation
 
@@ -65,11 +65,11 @@ You can add a new monitoring command directly from the lower prompt using the fo
 ## Example:
 
 **"Error" "tail -f /var/log/syslog"** — This will immediately start monitoring for "Error" in the syslog output.
-
+<br>
 <img width="841" height="55" alt="image" src="https://github.com/user-attachments/assets/b84c6756-a3a4-4289-81dc-d5a5b0b50c9d" />
-
+<br>
 <img width="838" height="56" alt="image" src="https://github.com/user-attachments/assets/49c85185-1dce-436b-ab1f-453ab1e80045" />
-
+<br>
 <img width="413" height="40" alt="image" src="https://github.com/user-attachments/assets/cc16393a-7c33-40d0-823a-b65b08a71fb2" />
 
 # Key Bindings
@@ -91,6 +91,7 @@ When the popup is visible, the following keys are available:
 - Arrow Up / Down: Select a command from the list.
 - Space: Toggle ON/OFF (Enabled/Disabled) the selected command.
 - Delete: Remove the selected command from the monitor list.
+- W Key: Write config file (Over-write)
 - Ctrl+P: Close the popup.
 
 # License
