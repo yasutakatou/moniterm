@@ -12,6 +12,9 @@
   - Users can define specific commands to be executed at regular intervals (defaulting to every 3 seconds) to monitor system status or application logs
 - **Label-Based Output Filtering**
   - The tool automatically filters the output of periodic commands by searching for specific "labels" and only displays matching lines in the monitoring pane
+- **Dynamic Command Management (New)**
+  - Add new monitoring commands directly from the shell prompt.
+  - Interactive Popup menu to toggle (ON/OFF) or delete monitoring commands.
 - **Interactive Shell with Path Completion**
   - The lower pane functions as a terminal emulator supporting standard commands like cd, command history navigation (Up/Down arrows), and tab completion for files and paths
 - **Cross-Platform Support**
@@ -36,7 +39,7 @@ LABEL_STRING	COMMAND_TO_EXECUTE
 - LABEL: The specific string the application will look for in the command's output
 - COMMAND: The actual shell command to be executed periodically
 
-## Running the Application
+# Running the Application
 
 You can start the application with several optional flags to customize its behavior
 
@@ -49,6 +52,18 @@ Example command:
 ./moniterm -config=my_monitor.ini -interval=5 -shell=/bin/zsh
 ```
 
+# Adding Commands Dynamically
+
+You can add a new monitoring command directly from the lower prompt using the following format (double quotes are required for both arguments):
+
+```
+"LABEL" "COMMAND"
+```
+
+## Example:
+
+**"Error" "tail -f /var/log/syslog"** — This will immediately start monitoring for "Error" in the syslog output.
+
 # Key Bindings
 
 While the application is running, you can use the following keys to interact with the interface
@@ -59,6 +74,16 @@ While the application is running, you can use the following keys to interact wit
 - Arrow Left / Right: Move the cursor within the current input line
 - Backspace / Delete: Edit the current command text
 - Esc / Ctrl+C: Exit the application
+- Ctrl+P: **Toggle Monitor Management Popup.**
+
+## Monitor Management Popup (Ctrl+P)
+
+When the popup is visible, the following keys are available:
+
+- Arrow Up / Down: Select a command from the list.
+- Space: Toggle ON/OFF (Enabled/Disabled) the selected command.
+- Delete: Remove the selected command from the monitor list.
+- Ctrl+P: Close the popup.
 
 # License
 MIT license
