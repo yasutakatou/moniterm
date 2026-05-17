@@ -22,6 +22,19 @@
 
 <img width="876" height="457" alt="image" src="https://github.com/user-attachments/assets/00987a0c-e26a-41fa-850a-c9da49981fd7" />
 
+## v0.3
+
+- **You can now check the timestamp**
+  The execution time is displayed in the monitoring pane at the top, in the format [15:30:01].
+- **Adjusting the split screen**
+  Alt + ↑ (or Ctrl + K): Moves the divider up to expand the operation pane.
+  Alt + ↓ (or Ctrl + J): Moves the divider down to expand the monitoring pane.
+- **Viewing past logs (scrolling back)**
+  PageUp: Scrolls the operation log (lower screen) upward.
+  PageDown: Scrolls the operation log downward.
+  - The current scroll amount is displayed to the right of the divider, such as [SCROLL:5].
+  - Entering a new command and pressing Enter automatically returns the view to the latest position (the bottom).
+
 # Installation
 
 To use this application, you can build it from the source code using the Go compiler:
@@ -83,6 +96,10 @@ While the application is running, you can use the following keys to interact wit
 - Backspace / Delete: Edit the current command text
 - Esc / Ctrl+C: Exit the application
 - Ctrl+P: **Toggle Monitor Management Popup.**
+- Alt + ↑ (or Ctrl + K): Moves the divider up to expand the operation pane.
+- Alt + ↓ (or Ctrl + J): Moves the divider down to expand the monitoring pane.
+- PageUp: Scrolls the operation log (lower screen) upward.
+- PageDown: Scrolls the operation log downward.
 
 ## Monitor Management Popup (Ctrl+P)
 
